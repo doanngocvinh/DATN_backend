@@ -1,7 +1,7 @@
 from typing import Annotated, Union
 
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -14,12 +14,14 @@ class Item(BaseModel):
 
 @app.post("/files/")
 async def create_file(file: Annotated[bytes, File()]):
-    return {"file_size": len(file)}
+    return {"file_size": file}
 
 @app.post("/uploadfile/")
-async def create_upload_file(file: UploadFile):
-    return {"filename": file.filename}
-
+async def create_upload_file(file: UploadFile = File(...), type: str = Form(...)):
+    # Save the file and process the type parameter as needed.
+    # ...
+    print(file)
+    return {"filename": file.filename, "type": type}
 
 
 app.add_middleware(

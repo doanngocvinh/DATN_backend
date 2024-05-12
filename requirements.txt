@@ -1,0 +1,10 @@
+torch
+torchvision
+numpy
+# ipython==7.21.0
+opencv-python
+tqdm
+# moviepy==1.0.3
+color_transfer_py
+flask
+fastapi
