@@ -1,9 +1,10 @@
-from typing import Annotated, Union
-
-
-from fastapi import FastAPI, File, UploadFile, Form
+import os
+import shutil
+from fastapi import FastAPI, File, Path, UploadFile, Form
+from fastapi.responses import * 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from .model.tools.video2anime import *
 
 app = FastAPI(docs_url="/api/docs", openapi_url="/api/openapi.json")
 
@@ -11,17 +12,52 @@ app = FastAPI(docs_url="/api/docs", openapi_url="/api/openapi.json")
 class Item(BaseModel):
     text: str
 
-
 @app.post("/files/")
-async def create_file(file: Annotated[bytes, File()]):
+async def create_file(file: UploadFile = File(...)):
     return {"file_size": file}
+
+
+@app.post("/uploadfiles/")
+async def create_upload_file(file: UploadFile = File(...), type: str = Form(...)):
+    # Construct the file path in the root directory
+    file_path = file.filename
+
+    # Save the uploaded file
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Process the video using the cartoonizer
+    arg = parse_args(input_video_path=file_path)
+
+    check_folder(arg.output)
+    func = Cartoonizer(arg)
+    info = func()
+
+    print(f'output video: {info}')
+
+    return {"filename": file.filename, "type": type}
+
 
 @app.post("/uploadfile/")
 async def create_upload_file(file: UploadFile = File(...), type: str = Form(...)):
-    # Save the file and process the type parameter as needed.
-    # ...
-    print(file)
-    return {"filename": file.filename, "type": type}
+    # Construct the file path in the root directory
+    file_path = file.filename
+
+    # Save the uploaded file
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Process the video using the cartoonizer
+    args = parse_args(input_video_path=file_path)
+
+    check_folder(args.output)
+    func = Cartoonizer(args)
+    info = func()  # Assuming this function processes the video and returns info about the output
+
+    print(f'output video: {info}')
+
+    # Stream the processed video back to the client
+    return StreamingResponse(open(info, 'rb'), media_type='video/mp4', headers={"Content-Disposition": f"attachment; filename={os.path.basename(info)}"})
 
 
 app.add_middleware(
@@ -32,77 +68,3 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-class TodoCreate(BaseModel):
-    title: str
-
-
-class TodoUpdate(BaseModel):
-    title: Union[str, None] = None
-    completed: Union[bool, None] = None
-
-
-class TodoItem(BaseModel):
-    id: int
-    title: str
-    completed: bool
-
-
-# Define the TodoItem model
-class TodoItem(BaseModel):
-    id: int
-    title: str
-    completed: bool
-
-
-# In-memory storage for todo items
-todos = []
-
-# Route to create a new todo item
-
-
-@app.post("/api/todos")
-def create_todo_item(todo: TodoCreate):
-    new_todo = TodoItem(id=len(todos) + 1, title=todo.title, completed=False)
-    todos.append(new_todo)
-    return new_todo
-
-# Route to get all todo items
-
-
-@app.get("/api/todos")
-def get_all_todo_items():
-    return todos
-
-# Route to get a specific todo item by ID
-
-
-@app.get("/api/todos/{todo_id}")
-def get_todo_item(todo_id: int):
-    for todo in todos:
-        if todo.id == todo_id:
-            return todo
-    return {"error": "Todo item not found"}
-
-# Route to update a specific todo item by ID
-
-
-@app.patch("/api/todos/{todo_id}")
-def update_todo_item(todo_id: int, todo: TodoUpdate):
-    for todo_item in todos:
-        if todo_item.id == todo_id:
-            todo_item.title = todo.title if todo.title is not None else todo_item.title
-            todo_item.completed = todo.completed if todo.completed is not None else todo_item.completed
-            return todo_item
-    return {"error": "Todo item not found"}
-
-# Route to delete a specific todo item by ID
-
-
-@app.delete("/api/todos/{todo_id}")
-def delete_todo_item(todo_id: int):
-    for i, todo_item in enumerate(todos):
-        if todo_item.id == todo_id:
-            del todos[i]
-            return {"message": "Todo item deleted"}
-    return {"error": "Todo item not found"}
