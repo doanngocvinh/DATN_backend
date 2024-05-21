@@ -56,9 +56,13 @@ async def create_upload_file(file: UploadFile = File(...), type: str = Form(...)
 
     print(f'output video: {info}')
 
+    def iterfile():
+            with open(info, "rb") as file_like:
+                yield from file_like
+
     # Stream the processed video back to the client
     return StreamingResponse(open(info, 'rb'), media_type='video/mp4', headers={"Content-Disposition": f"attachment; filename={os.path.basename(info)}"})
-
+    # return StreamingResponse(iterfile(), media_type="video/mp4")
 
 app.add_middleware(
     CORSMiddleware,
