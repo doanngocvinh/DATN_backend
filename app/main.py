@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 import boto3
 from botocore.client import Config
 from dotenv import load_dotenv
@@ -50,6 +51,50 @@ def upload_to_r2(object_name, file_path):
     except Exception as e:
         print(f"Error uploading file: {e}")
         raise
+
+
+def convert_to_mp4(input_path: str, output_path: str):
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", input_path, "-c:v", "libx264", "-preset", "fast", "-c:a", "aac", output_path],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        print(f"Conversion to MP4 successful: {output_path}")
+        print(result.stdout.decode())
+        print(result.stderr.decode())
+    except subprocess.CalledProcessError as e:
+        print(f"Error during video conversion: {e}")
+        print(e.stdout.decode())
+        print(e.stderr.decode())
+        raise HTTPException(status_code=500, detail="Error converting video to MP4")
+
+@app.post("/convert_to_mp4/")
+async def convert_video(file: UploadFile = File(...)):
+    # Construct the file path in the root directory
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    input_file_path = f"{timestamp}_{file.filename}"
+
+    # Save the uploaded file
+    with open(input_file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Define the output file path
+    output_file_path = f"{timestamp}_converted.mp4"
+
+    # Convert the video to MP4
+    convert_to_mp4(input_file_path, output_file_path)
+
+    # Clean up the original file
+    try:
+        os.remove(input_file_path)
+        print(f"Deleted local file: {input_file_path}")
+    except Exception as e:
+        print(f"Error deleting local file: {e}")
+
+    return {"output_file_path": output_file_path}
+    
 @app.post("/uploadfile/")
 async def create_upload_file(file: UploadFile = File(...), type: str = Form(...)):
     # Construct the file path in the root directory
@@ -69,17 +114,22 @@ async def create_upload_file(file: UploadFile = File(...), type: str = Form(...)
 
     print(f'output video: {info}')
 
+    info_split = info.split('/')[-1]
+
+    convert = f'convert/{info_split}'
+
+    convert_to_mp4(info, convert)
+
     # Upload the processed video to R2
-    object_name = upload_to_r2(object_name=info.split('/')[-1], file_path=info)
+    object_name = upload_to_r2(object_name=info_split, file_path=convert)
 
     try:
         os.remove(file_path)
         os.remove(info)
+        os.remove(convert)
         print(f"Deleted local files: {file_path} and {info}")
     except Exception as e:
         print(f"Error deleting local files: {e}")
-
-    print(object_name)
     
     # Stream the processed video back to the client
     return {"object_name": object_name}
