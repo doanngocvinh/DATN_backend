@@ -316,8 +316,9 @@ def add_subtitle_to_image(image_path, subtitles, output_dir):
     else:
         # If no subtitle found, just copy the original frame
         shutil.copy(image_path, output_dir)
+
 @app.post("/process_video/")
-async def process_video(video_file: UploadFile = File(...)):
+async def process_video( type: str, video_file: UploadFile = File(...)):
     try:
         # Save the uploaded video file
         video_path = f"temp_{video_file.filename}"
@@ -354,7 +355,7 @@ async def process_video(video_file: UploadFile = File(...)):
 
 
 @app.post("/process_video_srt/")
-async def process_video_srt(video_file: UploadFile = File(...), srt_file: UploadFile = File(...)):
+async def process_video_srt(type:str, video_file: UploadFile = File(...), srt_file: UploadFile = File(...)):
     try:
         # Save the uploaded video file
         video_path = f"temp_{video_file.filename}"
@@ -403,6 +404,124 @@ async def process_video_srt(video_file: UploadFile = File(...), srt_file: Upload
         shutil.rmtree(output_frames_sub_dir)
 
         return JSONResponse(content={"message": "Processing complete", "download_url": presigned_url, 'object_name': r2_object_name})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/process_and_upload_video/")
+async def process_and_upload_video(type: str = Form(...), video_file: UploadFile = File(...)):
+    try:
+        # Save the uploaded video file
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        video_path = f"temp_{timestamp}_{video_file.filename}"
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(video_file.file, buffer)
+
+        # Process the video using the cartoonizer
+        args = parse_args(input_video_path=video_path, model_path=type)
+        check_folder(args.output)
+        func = Cartoonizer(args)
+        info = func()  # Assuming this function processes the video and returns info about the output
+
+        info_split = info.split('/')[-1]
+        converted_video_path = f'convert/{info_split}'
+        convert_to_mp4(info, converted_video_path)
+
+        # Find scenes and save frames (assuming these functions are defined elsewhere)
+        frames_dir = 'output_frames'
+        scenes = find_scenes(converted_video_path)
+        scene_times = save_frames(converted_video_path, scenes, output_dir=frames_dir)
+
+        # Create a zip file of the output frames
+        zip_filename = "output_frames.zip"
+        with zipfile.ZipFile(zip_filename, 'w') as zipf:
+            for root, _, files in os.walk(frames_dir):
+                for file in files:
+                    zipf.write(os.path.join(root, file), arcname=file)
+
+        # Upload the zip file to R2
+        r2_object_name = f"processed_videos/{zip_filename}"
+        uploaded_object_name = upload_to_r2(r2_object_name, zip_filename)
+
+        # Generate presigned URL for the uploaded file
+        presigned_url = generate_presigned_url(uploaded_object_name)
+
+        # Upload the processed video to R2
+        video_object_name = upload_to_r2(f"processed_videos/{info_split}", converted_video_path)
+
+        # Clean up the temporary files and directories
+        os.remove(video_path)
+        os.remove(zip_filename)
+        os.remove(info)
+        os.remove(converted_video_path)
+        shutil.rmtree(frames_dir)
+
+        return JSONResponse(content={"message": "Processing complete", "download_url": presigned_url, "video_object_name": video_object_name})
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/process_and_upload_video_srt/")
+async def process_video_srt(type: str = Form(...), video_file: UploadFile = File(...), srt_file: UploadFile = File(...)):
+    try:
+        # Save the uploaded video file
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        video_path = f"temp_{timestamp}_{video_file.filename}"
+        with open(video_path, "wb") as buffer:
+            shutil.copyfileobj(video_file.file, buffer)
+
+        # Save the uploaded SRT file
+        srt_path = f"temp_{timestamp}_{srt_file.filename}"
+        with open(srt_path, "wb") as buffer:
+            shutil.copyfileobj(srt_file.file, buffer)
+
+        # Process the video using the cartoonizer
+        args = parse_args(input_video_path=video_path, model_path=type)
+        check_folder(args.output)
+        func = Cartoonizer(args)
+        info = func()  # Assuming this function processes the video and returns info about the output
+
+        info_split = info.split('/')[-1]
+        converted_video_path = f'convert/{info_split}'
+        convert_to_mp4(info, converted_video_path)
+
+        # Parse the SRT file
+        subtitles = parse_srt(srt_path)
+
+        # Find scenes and save frames from the cartoonized video
+        frames_dir = 'output_frames'
+        scenes = find_scenes(converted_video_path)
+        scene_times = save_frames(converted_video_path, scenes, output_dir=frames_dir)
+
+        # Add subtitles to frames
+        output_frames_sub_dir = 'output_frames_with_subtitles'  # Directory for frames with subtitles
+        os.makedirs(output_frames_sub_dir, exist_ok=True)
+        for image_name in os.listdir(frames_dir):
+            image_path = os.path.join(frames_dir, image_name)
+            add_subtitle_to_image(image_path, subtitles, output_frames_sub_dir)
+
+        # Create a zip file of the output frames with subtitles
+        zip_filename = "output_frames_with_subtitles.zip"
+        with zipfile.ZipFile(zip_filename, 'w') as zipf:
+            for root, _, files in os.walk(output_frames_sub_dir):
+                for file in files:
+                    zipf.write(os.path.join(root, file), arcname=file)
+
+        # Upload the zip file to R2
+        r2_object_name = f"processed_videos/{zip_filename}"
+        uploaded_object_name = upload_to_r2(r2_object_name, zip_filename)
+
+        # Generate presigned URL for the uploaded file
+        presigned_url = generate_presigned_url(uploaded_object_name)
+
+        # Clean up the temporary files and directories
+        os.remove(video_path)
+        os.remove(srt_path)
+        os.remove(zip_filename)
+        shutil.rmtree(frames_dir)
+        shutil.rmtree(output_frames_sub_dir)
+
+        return JSONResponse(content={"message": "Processing complete", "download_url": presigned_url, "object_name": r2_object_name})
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
